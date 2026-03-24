@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import models,schemas,utils
 from auth_database import get_db    
-from jose import jwt,JWTError
+from jose import jwt, JWTError
 from datetime import datetime, timedelta    
 from fastapi.security import OAuth2PasswordRequestForm,OAuth2PasswordBearer
 
@@ -71,12 +71,12 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
         if username is None:
             raise credentials_exception
-    except jwt.JWTError:
+    except JWTError:
         raise credentials_exception
     
     return {"username": username, "role": role}
@@ -92,4 +92,17 @@ def require_role(required_role: str):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to access this resource")
         return current_user
     return role_checker
+
+@app.get("/profile")
+def read_profile(current_user: dict = Depends(require_role("user"))):
+    return {"message": f"Hello, {current_user['username']}! This is your profile.", "role": current_user['role']}
+
+@app.get("/user/dashboard")
+def user_dashboard(current_user: dict = Depends(require_role("user"))):
+    return {"message":"Welcome User"}
+
+@app.get("/admin/dashboard")
+def admin_dashboard(current_user: dict = Depends(require_role("admin"))):
+    return {"message":"Welcome Admin"}
+
 
