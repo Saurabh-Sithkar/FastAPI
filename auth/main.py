@@ -2,16 +2,16 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import models,schemas,utils
 from auth_database import get_db    
-from jose import jwt
+from jose import jwt,JWTError
 from datetime import datetime, timedelta    
-import fastapi.security as OAth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm,OAuth2PasswordBearer
 
 
 SECRET_KEY = "X8EOsMzLhL8AbklmFPgbsxfj5oobjZluLS_kSIxwQNw"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 # Helper function to create user data
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -37,7 +37,7 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     # Hash the password and create a new user
     hashed_pass = utils.hash_password(user.password)
     # create a new user instance and save to the database
-    new_user = models.User(username=user.username, email=user.email, hased_password=hashed_pass, role=user.role)
+    new_user = models.User(username=user.username, email=user.email, hashed_password=hashed_pass, role=user.role)
 
     # Save the new user to the database
     db.add(new_user)
@@ -50,18 +50,46 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/login")
-def login(form_data: OAth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username")
     
-    if not utils.verify_password(form_data.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+    if not utils.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
     
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    token_data = {"sub": user.username,'role':user.role}
+    token = create_access_token(token_data)
+    return {"access_token": token, "token_type": "bearer"}
 
 
 
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        if username is None:
+            raise credentials_exception
+    except jwt.JWTError:
+        raise credentials_exception
+    
+    return {"username": username, "role": role}
 
+@app.get("/protected")
+def protected_route(current_user: dict = Depends(get_current_user)):
+    return {"message": f"Hello, {current_user['username']}! You have accessed a protected route.", "role": current_user['role']}
+
+
+def require_role(required_role: str):
+    def role_checker(current_user: dict = Depends(get_current_user)):
+        if current_user['role'] != required_role:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to access this resource")
+        return current_user
+    return role_checker
 
